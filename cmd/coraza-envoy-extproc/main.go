@@ -41,7 +41,9 @@ func main() {
 
 	slog.Info("starting gRPC server", "port", *port)
 
-	gs.Serve(lis)
+	if err := gs.Serve(lis); err != nil {
+		fatal(fmt.Errorf("gRPC server failed: %w", err))
+	}
 }
 
 func logError(error types.MatchedRule) {

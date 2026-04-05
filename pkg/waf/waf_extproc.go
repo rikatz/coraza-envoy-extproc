@@ -328,8 +328,7 @@ func dropTransaction(stream extproc.ExternalProcessor_ProcessServer, err error) 
 			},
 		},
 	}
-	stream.Send(resp)
-	return nil
+	return stream.Send(resp)
 }
 
 func dropResponseBodyTransaction(stream extproc.ExternalProcessor_ProcessServer, err error) error {
@@ -353,8 +352,7 @@ func dropResponseBodyTransaction(stream extproc.ExternalProcessor_ProcessServer,
 			},
 		},
 	}
-	stream.Send(resp)
-	return nil
+	return stream.Send(resp)
 }
 
 func setHeaders(headers *corev3.HeaderMap, addHeaderFunc func(key string, value string)) {
