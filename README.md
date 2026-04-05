@@ -26,7 +26,7 @@ $ curl -H "block: confidential_data" --resolve xpto:8000:127.0.0.1 http://xpto:8
 < HTTP/1.1 500 Internal Server Error
 ```
 
-This happens because the current used [WAF Rules](./default.conf) filter requests that 
+This happens because the current used [WAF Rules](./config/rules/default.conf) filter requests that 
 contains the query arg `id`, blocking any request where `id=0` and also any request that
 contains the string "lalalala" in its body.
 
@@ -36,11 +36,11 @@ there is a header called "badheader" on the response, or the body contains a val
 ## tl;dr architecture
 
 The service is a gRPC implementation of the ext_authz protocol, that instantiates a 
-new WAF parsing the rules file (currently [./default.conf](default.conf)) and listens 
+new WAF parsing the rules file (currently [config/rules/default.conf](config/rules/default.conf)) and listens 
 on port 9001.
 
 Envoy then can establish a filter and an upstream to request for the "decision" of this request. Please
-check the file [config/envoy.yaml](config/envoy.yaml) for a better example.
+check the file [config/envoy/envoyextproc.yaml](config/envoy/envoyextproc.yaml) for a better example.
 
 ```yaml
 http_filters:

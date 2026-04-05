@@ -1,9 +1,9 @@
 services:
 
   front-envoy:
-    image: envoyproxy/envoy:distroless-v1.36.4
+    image: envoyproxy/envoy:distroless-v1.37.1@sha256:4d9226b9fd4d1449887de7cde785beb24b12e47d6e79021dec3c79e362609432
     volumes:
-    - ./config/envoyextproc.yaml:/envoy.yaml
+    - ./config/envoy/envoyextproc.yaml:/envoy.yaml
     ports:
     - "8000:8000"
     command:
@@ -19,11 +19,11 @@ services:
     build:
       dockerfile: Dockerfile
     volumes:
-    - ./default.conf:/default.conf
+    - ${RULES_DIR:-./config/rules}:/rules
     command:
     - /waf
-    - -directives=/default.conf
+    - -directives=/rules/default.conf
 
   upstream-service:
-    image: registry.k8s.io/gateway-api/echo-basic:v20251204-v1.4.1
+    image: registry.k8s.io/gateway-api/echo-basic:v20251204-v1.4.1@sha256:79fa51c368ac16ef6bad70bd2e0176c306a4f6e5f6f5ffe54a869ba5590ee642
 

@@ -319,7 +319,7 @@ func dropTransaction(stream extproc.ExternalProcessor_ProcessServer, err error) 
 		Response: &extproc.ProcessingResponse_ImmediateResponse{
 			ImmediateResponse: &extproc.ImmediateResponse{
 				Status: &envoy_type.HttpStatus{Code: envoy_type.StatusCode_Forbidden},
-				Body:   []byte(fmt.Sprintf("403 Forbidden: Blocked by WAF - %s", err.Error())),
+				Body:   fmt.Appendf(nil, "403 Forbidden: Blocked by WAF - %s", err.Error()),
 				Headers: &extproc.HeaderMutation{
 					SetHeaders: []*corev3.HeaderValueOption{
 						{Header: &corev3.HeaderValue{Key: "content-type", Value: "text/plain"}},

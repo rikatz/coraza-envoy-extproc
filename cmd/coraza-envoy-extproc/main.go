@@ -10,13 +10,13 @@ import (
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/types"
 	envoy_service_extproc_v3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"github.com/rikatz/envoy-authz-coraza/pkg/waf"
+	"github.com/rikatz/coraza-envoy-extproc/pkg/waf"
 	"google.golang.org/grpc"
 )
 
 func main() {
 	port := flag.Int("port", 9001, "gRPC port")
-	directivesFile := flag.String("directives", "./default.conf", "WAF directive files")
+	directivesFile := flag.String("directives", "./config/rules/default.conf", "WAF directive files")
 	flag.Parse()
 
 	opts := &slog.HandlerOptions{}
