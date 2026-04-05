@@ -1,0 +1,8 @@
+services:
+  waf-service:
+    volumes:
+    - ${WAF_LOGDIR:-./tmp/logs}:/var/log/coraza
+    command:
+    - /waf
+    - -directives=/rules/default.conf
+    - -logfile=/var/log/coraza/error.log

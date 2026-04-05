@@ -217,7 +217,8 @@ func (r *requestTransaction) processRequestHeaders(attrs map[string]*structpb.St
 	hostPort := getHeaderValue(headers, ":authority")
 	host, _, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return fmt.Errorf("error extracting the host header: %w", err)
+		// :authority may not include a port (e.g., "localhost" instead of "localhost:8000")
+		host = hostPort
 	}
 
 	r.tx.SetServerName(host)
