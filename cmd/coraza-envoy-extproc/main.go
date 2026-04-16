@@ -32,7 +32,7 @@ func main() {
 		if err != nil {
 			fatal(fmt.Errorf("error opening log file %s: %w", *logfile, err))
 		}
-		defer errorLogFile.Close()
+		defer func() { _ = errorLogFile.Close() }()
 	}
 
 	wafInstance, err := coraza.NewWAF(coraza.NewWAFConfig().
@@ -62,7 +62,7 @@ func logError(error types.MatchedRule) {
 	msg := error.ErrorLog()
 	slog.Info("[logError]", "severity", error.Rule().Severity(), "message", msg)
 	if errorLogFile != nil {
-		fmt.Fprintln(errorLogFile, msg)
+		_, _ = fmt.Fprintln(errorLogFile, msg)
 	}
 }
 
