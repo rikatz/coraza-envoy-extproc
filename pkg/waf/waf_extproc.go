@@ -55,6 +55,15 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 	var resp = &extproc.ProcessingResponse{}
 	var tx *requestTransaction
 
+	// [Claude fix] Track whether request/response body phases have been processed.
+	// Envoy only sends RequestBody/ResponseBody messages when bodies actually exist.
+	// For bodyless requests (GET, HEAD, DELETE) or bodyless responses (204, HEAD),
+	// the corresponding Coraza ProcessRequestBody() / ProcessResponseBody() calls
+	// are never made, silently skipping ALL phase 2 and phase 4 CRS rules.
+	// These flags let us detect the gap and trigger the missing phase evaluations.
+	var requestBodyProcessed bool
+	var responseBodyProcessed bool
+
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -82,6 +91,16 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 
 			// First step can also add the transaction logging and transaction closing
 			defer func() {
+				// [Claude fix] Evaluate phase 4 for responses without body.
+				// When a response has no body (e.g., 204 No Content, HEAD responses),
+				// Envoy never sends a ResponseBody message. Without this call,
+				// Coraza's ProcessResponseBody() (phase 4) is never invoked, causing
+				// all outbound data leakage rules (CRS 950-956) to be skipped.
+				if !responseBodyProcessed {
+					if it, err := tx.tx.ProcessResponseBody(); it != nil || err != nil {
+						log.Printf("tx %s response body phase error or interruption: it=%v err=%v", tx.tx.ID(), it, err)
+					}
+				}
 				tx.tx.ProcessLogging()
 				if err := tx.tx.Close(); err != nil {
 					log.Printf("tx %s failed to close transaction %s", tx.tx.ID(), err)
@@ -94,6 +113,25 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 			if err := tx.processRequestHeaders(req.GetAttributes(), v.RequestHeaders.Headers); err != nil {
 				return dropTransaction(stream, err)
 			}
+
+			// [Claude fix] Evaluate phase 2 immediately for bodyless requests.
+			// When EndOfStream is true on RequestHeaders, Envoy will NOT send a
+			// RequestBody message. Without this call, Coraza's ProcessRequestBody()
+			// (phase 2) is never invoked, causing ~900 CRS rule evaluation failures:
+			// all phase 2 rules checking ARGS, ARGS_GET, REQUEST_URI, etc. (932xxx
+			// RCE, 933xxx PHP injection, 941xxx XSS, 942xxx SQLi, etc.) are silently
+			// skipped for every GET, HEAD, and DELETE request.
+			if v.RequestHeaders.EndOfStream {
+				it, err := tx.tx.ProcessRequestBody()
+				if err != nil {
+					return dropTransaction(stream, fmt.Errorf("error processing request body (phase 2): %w", err))
+				}
+				if it != nil {
+					return dropTransaction(stream, fmt.Errorf("request denied by WAF rule and action: %d - %s", it.RuleID, it.Action))
+				}
+				requestBodyProcessed = true
+			}
+
 			resp = &extproc.ProcessingResponse{
 				Response: &extproc.ProcessingResponse_RequestHeaders{
 					RequestHeaders: &extproc.HeadersResponse{},
@@ -108,6 +146,8 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 			if err := tx.processRequestBody(v.RequestBody); err != nil {
 				return dropTransaction(stream, err)
 			}
+			requestBodyProcessed = true
+
 			resp = &extproc.ProcessingResponse{
 				Response: &extproc.ProcessingResponse_RequestBody{
 					RequestBody: &extproc.BodyResponse{},
@@ -118,6 +158,22 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 			// Transaction ID MUST exist before moving to request body or any other part
 			if transactionID == "" || tx == nil {
 				return dropUnknownTransaction(stream)
+			}
+
+			// [Claude fix] Safety net for phase 2 evaluation.
+			// If we reach ResponseHeaders without having processed a RequestBody
+			// message, phase 2 was not yet evaluated. This handles edge cases where
+			// the EndOfStream flag on RequestHeaders was not set (e.g., Envoy body
+			// mode changes) but no body was ultimately sent.
+			if !requestBodyProcessed {
+				it, err := tx.tx.ProcessRequestBody()
+				if err != nil {
+					return dropTransaction(stream, fmt.Errorf("error processing request body (phase 2): %w", err))
+				}
+				if it != nil {
+					return dropTransaction(stream, fmt.Errorf("request denied by WAF rule and action: %d - %s", it.RuleID, it.Action))
+				}
+				requestBodyProcessed = true
 			}
 
 			out := fmt.Sprintf("%s RESPONSE_HEADERS: %v\n", ts, v.ResponseHeaders)
@@ -142,6 +198,7 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 			if err := tx.processResponseBody(v.ResponseBody); err != nil {
 				return dropResponseBodyTransaction(stream, err)
 			}
+			responseBodyProcessed = true
 
 			resp = &extproc.ProcessingResponse{
 				Response: &extproc.ProcessingResponse_ResponseBody{
@@ -150,24 +207,6 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 			}
 		}
 
-		// CONTINUE processing without modification
-
-		/* 		if req.GetRequestTrailers() != nil {
-		   			resp = &extproc.ProcessingResponse{
-		   				Response: &extproc.ProcessingResponse_RequestTrailers{
-		   					RequestTrailers: &extproc.TrailersResponse{},
-		   				},
-		   			}
-		   		}
-
-		   		if req.GetResponseTrailers() != nil {
-		   			resp = &extproc.ProcessingResponse{
-		   				Response: &extproc.ProcessingResponse_ResponseTrailers{
-		   					ResponseTrailers: &extproc.TrailersResponse{},
-		   				},
-		   			}
-		   		}
-		*/
 		if err := stream.Send(resp); err != nil {
 			log.Printf("send error: %v", err)
 			return err
@@ -201,7 +240,7 @@ func (r *requestTransaction) processRequestHeaders(attrs map[string]*structpb.St
 		return fmt.Errorf("error parsing source address:port %s: %w", srcAddrPortRaw, err)
 	}
 
-	dstAddrPortRaw := getAttribute(attrs, "source.address")
+	dstAddrPortRaw := getAttribute(attrs, "destination.address")
 	dstAddrPort, err := netip.ParseAddrPort(dstAddrPortRaw)
 	if err != nil {
 		return fmt.Errorf("error parsing destination address:port %s: %w", dstAddrPortRaw, err)
@@ -217,11 +256,19 @@ func (r *requestTransaction) processRequestHeaders(attrs map[string]*structpb.St
 	hostPort := getHeaderValue(headers, ":authority")
 	host, _, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return fmt.Errorf("error extracting the host header: %w", err)
+		// :authority may not include a port (e.g., "localhost" instead of "localhost:8000")
+		host = hostPort
 	}
 
 	r.tx.SetServerName(host)
 	setHeaders(headers, r.tx.AddRequestHeader)
+
+	// [Claude fix] Envoy converts the HTTP/1.1 Host header into the :authority
+	// pseudo-header and removes the original Host from the header map. Without
+	// this, Coraza never sees a Host header and rule 920280 fires on every request.
+	if hostPort != "" {
+		r.tx.AddRequestHeader("Host", hostPort)
+	}
 
 	if it := r.tx.ProcessRequestHeaders(); it != nil {
 		return fmt.Errorf("request denied by WAF rule %d", it.RuleID)
