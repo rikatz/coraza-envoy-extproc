@@ -62,7 +62,6 @@ static_resources:
               socket_address:
                 address: upstream-service
                 port_value: 3000
-
   - name: ext-proc
     type: STRICT_DNS
     lb_policy: ROUND_ROBIN

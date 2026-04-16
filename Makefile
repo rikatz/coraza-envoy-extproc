@@ -58,8 +58,6 @@ setup-crs: download-crs ## Assemble CRS rules in tmp/ for FTW testing
 	@rm -rf $(CRS_RULES_DIR)
 	@mkdir -p $(CRS_RULES_DIR)/rules
 	@cp config/crs/crs-ftw.conf $(CRS_RULES_DIR)/default.conf
-	@cp $(CORAZA_CONF_RECOMMENDED) $(CRS_RULES_DIR)/coraza.conf-recommended
-	@cp $(CRS_DIR)/crs-setup.conf.example $(CRS_RULES_DIR)/crs-setup.conf
 	@cp -r $(CRS_DIR)/rules/* $(CRS_RULES_DIR)/rules/
 	@echo "CRS rules assembled in $(CRS_RULES_DIR)"
 
@@ -71,7 +69,8 @@ GO_FTW = $(shell go env GOPATH)/bin/go-ftw
 $(GO_FTW): ## Install go-ftw
 	go install github.com/coreruleset/go-ftw/v2@$(GO_FTW_VERSION)
 
-ftw: setup-crs $(GO_FTW) verify-docker-compose ## Run CRS FTW conformance tests
+.PHONY: setup-ftw
+setup-ftw: setup-crs $(GO_FTW) verify-docker-compose ## Run CRS FTW conformance tests
 	@mkdir -p tmp/logs
 	@rm -f $(CRS_LOGFILE)
 	@touch $(CRS_LOGFILE)
@@ -91,11 +90,11 @@ ftw: setup-crs $(GO_FTW) verify-docker-compose ## Run CRS FTW conformance tests
 		fi; \
 		sleep 1; \
 	done
+
+.PHONY: ftw
+ftw: 
 	@echo "Running FTW tests..."
-	$(GO_FTW) run -d $(CRS_DIR)/tests/regression/tests --config config/ftw/ftw.yaml --log-file $(CRS_LOGFILE) --overrides config/ftw/overrides.yml; \
-		STATUS=$$?; \
-		docker compose -f docker-compose.yaml -f docker-compose.ftw.yaml down; \
-		exit $$STATUS
+	$(GO_FTW) run -d $(CRS_DIR)/tests/regression/tests --config config/ftw/ftw.yaml --log-file $(CRS_LOGFILE) --overrides config/ftw/overrides.yml 
 
 clean: ## Remove build artifacts
 	rm -f $(BINARY_NAME)

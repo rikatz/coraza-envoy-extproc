@@ -6,3 +6,6 @@ services:
     - /waf
     - -directives=/rules/default.conf
     - -logfile=/var/log/coraza/error.log
+  upstream-service:
+    image: ghcr.io/coreruleset/albedo:0.3.0
+    command: ["--port", "3000"]

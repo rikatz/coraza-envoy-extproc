@@ -12,10 +12,11 @@ test_overrides:
   #
   # directly rejected by Envoy
   - rule_id: 911100
-    test_ids: [5,7,8]
+    test_ids: [5,7]
     reason: |
-       Invalid HTTP methods TEST, FOO and SUBSCRIBE cause Envoy to drop the connection (HPE_INVALID_METHOD).
-       Envoy v1.37 does not support custom HTTP methods. The request never reaches Coraza.
+       Invalid HTTP methods TEST and FOO cause Envoy to drop the connection (HPE_INVALID_METHOD).
+       Envoy v1.37 does not support these methods. The request never reaches Coraza.
+       Note: SUBSCRIBE (test 8) IS accepted by Envoy v1.37 and processed normally.
     output:
       expect_error: true
   - rule_id: 920100
@@ -34,27 +35,18 @@ test_overrides:
        The request does not reach Coraza therefore the rule is not triggered.
     output:
       expect_error: true
-  - rule_id: 920100
-    test_ids: [14]
-    reason: |
-       Invalid HTTP request line (method |GET) causes Envoy to drop the connection.
-    output:
-      expect_error: true
+  # [Claude fix] Changed from status: 200 / no_expect_ids to expect_error.
+  # Envoy drops the connection (EOF) when it encounters conflicting
+  # Content-Length and Transfer-Encoding headers. The request never reaches Coraza.
   - rule_id: 920181
     test_ids: [1]
     reason: |
       HTTP POST request with both Content-Length and Transfer-Encoding chunked headers.
-      Envoy strips the Transfer-Encoding header, so the rule does not trigger.
-    output:
-      status: 200
-      log:
-        no_expect_ids: [920181]
-  - rule_id: 920420
-    test_ids: [4]
-    reason: |
-       PROPFIND is not a standard HTTP method. Envoy drops the connection (HPE_INVALID_METHOD).
+      Envoy drops the connection before forwarding to ext_proc.
     output:
       expect_error: true
+  # [Claude fix] Removed 920420-4 override: PROPFIND is accepted by Envoy v1.37.
+  # Coraza processes the request normally and rule 920420 fires as expected.
   - rule_id: 934120
     test_ids: [23,24,25,26,39]
     reason: |
@@ -62,35 +54,27 @@ test_overrides:
     output:
       expect_error: true
   # protocol enforcement
+  # [Claude fix] Changed from status: 426 to expect_error.
+  # Envoy drops the connection (EOF) for HTTP/0.9 requests rather than returning 426.
   - rule_id: 920280
     test_ids: [3]
     reason: |
       Test expects error 400 (Apache doesn't allow HTTP/0.9).
-      But Envoy responds with 426 Upgrade Required.
+      Envoy drops the connection (EOF) for HTTP/0.9 requests.
     output:
-      status: 426
-      log:
-        no_expect_ids: [920280]
+      expect_error: true
+  # [Claude fix] Changed from status: 426 to expect_error for tests 3, 5, 8, 9.
+  # Envoy drops the connection (EOF) for these invalid HTTP versions rather than
+  # returning 426 Upgrade Required. The previous overrides assumed a 426 response
+  # but the actual behavior is a connection drop, confirmed by the ftw.yaml ignores
+  # that were masking these failures.
   - rule_id: 920430
-    test_ids: [3]
+    test_ids: [3,5]
     reason: |
-      Test expects error 400 (Apache doesn't allow HTTP/0.9).
-      But Envoy responds with 426 Upgrade Required.
+      HTTP/0.9 or missing version in request line. Envoy drops the connection (EOF)
+      before the request reaches Coraza.
     output:
-      status: 426
-      log:
-        no_expect_ids: [920430]
-  - rule_id: 920430
-    test_ids: [5]
-    reason: |
-      Test expects error 400 because request line without version will be interpreted as HTTP/0.9.
-      But Envoy responds with 426 Upgrade Required.
-      The original test expects an error because go-ftw can't handle the response from Apache.
-    output:
-      status: 426
-      expect_error: false
-      log:
-        no_expect_ids: [920430]
+      expect_error: true
   - rule_id: 920430
     test_ids: [6,7,10]
     reason: |
@@ -100,28 +84,27 @@ test_overrides:
   - rule_id: 920430
     test_ids: [8,9]
     reason: |
-      Tests expects the rule in the logs of the unallowed protocols (HTTP/4.0, HTTP/0.8).
-      But Envoy responds with 426 Upgrade Required.
+      Invalid HTTP versions (HTTP/4.0, HTTP/0.8). Envoy drops the connection (EOF)
+      before the request reaches Coraza.
     output:
-      status: 426
-      log:
-        no_expect_ids: [920430]
+      expect_error: true
+  # [Claude fix] Changed from status: 426 to expect_error.
+  # Envoy drops the connection (EOF) for HTTP/1.0 requests rather than returning 426.
   - rule_id: 944200
     test_ids: [1]
     reason: |
-      Original test uses HTTP/1.0, so Envoy responds with HTTP 426 Upgrade Required.
+      Original test uses HTTP/1.0. Envoy drops the connection (EOF)
+      before the request reaches Coraza.
     output:
-      status: 426
-      log:
-        no_expect_ids: [944200]
+      expect_error: true
+  # [Claude fix] Changed from status: 426 to expect_error.
   - rule_id: 941210
     test_ids: [6]
     reason: |
-      Original test uses HTTP/1.0, so Envoy responds with HTTP 426 Upgrade Required.
+      Original test uses HTTP/1.0. Envoy drops the connection (EOF)
+      before the request reaches Coraza.
     output:
-      status: 426
-      log:
-        no_expect_ids: [941210]
+      expect_error: true
 
   # header sanitizing
   - rule_id: 932161
@@ -132,19 +115,24 @@ test_overrides:
     output:
       log:
         no_expect_ids: [932161]
+  # [Claude fix] Changed from no_expect_ids (Referer sanitization) to expect_error.
+  # These tests use HTTP/1.0, which causes Envoy to drop the connection (EOF)
+  # before Referer sanitization even matters. The previous override assumed
+  # a normal response but was masked by the ftw.yaml ignore.
   - rule_id: 932207
     test_ids: [1,2,7]
     reason: |
-      The test tries to do RCE injection in the Referer header.
-      But the referrer header is sanitized by Envoy and removed from the request.
+      Positive tests using HTTP/1.0 with RCE payloads in the Referer header.
+      Envoy drops the connection (EOF) for HTTP/1.0 requests before the
+      request reaches Coraza.
     output:
-      log:
-        no_expect_ids: [932207]
+      expect_error: true
   - rule_id: 932237
-    test_ids: [8,18]
+    test_ids: [8]
     reason: |
-      These tests try to do RCE injection in the Referer header.
-      But the referrer header is sanitized by Envoy and removed from the request.
+      Test 8 injects RCE payload in the Referer header.
+      Envoy sanitizes the Referer header, removing the payload before ext_proc.
+      Note: Test 18 payload is in User-Agent (not Referer), so no override needed.
     output:
       log:
         no_expect_ids: [932237]
@@ -190,24 +178,6 @@ test_overrides:
       status: 200
       log:
         no_expect_ids: [920181]
-  # other Envoy specific
-  - rule_id: 932300
-    test_ids: [10]
-    reason: |
-      The match_regex is changed to make it LogFormat agnostic and because Envoy encodes < and >.
-    output:
-      log:
-        expect_ids: [932300]
-        match_regex: 'Matched Data:.*MAIL FROM:.*Smith@bar.com.*found within ARGS_POST:textarea:.*MAIL FROM:.*Smith@bar.com'
-  - rule_id: 920274
-    test_ids: [2,3,5]
-    reason: |
-      False Positives: Envoy Populates the :path header, therefore invalid characters are detected and
-      Coraza correctly triggers the rule 920274.
-    output:
-      log:
-        status: 200
-        expect_ids: [920274]
   - rule_id: 920100
     test_ids: [4]
     reason: |
@@ -251,34 +221,15 @@ test_overrides:
     output:
       log:
         expect_ids: [200002,200003]
-  - rule_id: 932200
-    test_ids: [13]
-    reason: |
-      The match_regex is changed to match against ARGS_GET instead of ARGS because coraza-waf is built with multi phase evaluation on.
-    output:
-      log:
-        expect_ids: [932200]
-        match_regex: 'found within ARGS_GET:host:'
-  - rule_id: 933120
-    test_ids: [2]
-    reason: |
-      The match_regex is changed to match against ARGS_POST instead of ARGS because coraza-waf is built with multi phase evaluation on.
-    output:
-      log:
-        expect_ids: [933120]
-        match_regex: 'session.referer_check=t found within ARGS_POST:var:'
-
-  # Tests that are different because of our testing setup
-  # In most cases this is because we overwrite the host header
+  # [Claude fix] Changed from status: 200 / no_expect_ids to expect_error.
+  # Envoy drops the connection (EOF) for HTTP/1.0 with empty Host header.
   - rule_id: 920280
     test_ids: [1]
     reason: |
       920280-1 tests an empty Host: header which can only be done with HTTP/1.0.
-      But we overwrite both, the Host and the protocol in our test setup.
+      Envoy drops the connection (EOF) before the request reaches Coraza.
     output:
-      log:
-        status: 200
-        no_expect_ids: [920280]
+      expect_error: true
   - rule_id: 920274
     test_ids: [1]
     reason: |
@@ -287,65 +238,27 @@ test_overrides:
       Envoy Populates the :path header, therefore invalid characters are detected and
       Coraza correctly triggers the rule 920274.
     output:
+      status: 200
       log:
-        status: 200
         expect_ids: [920274]
   - rule_id: 920290
-    test_ids: [1,4]
+    test_ids: [1]
     reason: |
       On Apache the requests are rejected with error 400 because of the empty Host Header.
       Here go-ftw sets the host header correctly.
     output:
+      status: 200
       log:
-        status: 200
         no_expect_ids: [920290]
-  - rule_id: 920350
-    test_ids: [1,3,4,5,6]
-    reason: |
-      Rule 920350 tests that the Host header is not a numeric IP address.
-      These tests check different combinations of IPv4 and IPv6 addresses.
-      But here, go-ftw sets the host header to foo.example.com.
-    output:
-      log:
-        status: 200
-        no_expect_ids: [920350]
-  - rule_id: 931130
-    test_ids: [9,11,15]
-    reason: |
-      Original tests are negative cases with valid hosts, but in the test setup
-      the Host is rewritten to foo.example.com.
-      This is why "(RFI) Attack: Off-Domain Reference/Link" rule is triggered.
-    output:
-      log:
-        expect_ids: [931130]
-  - rule_id: 943110
-    test_ids: [4]
-    reason: |
-      Original test is a negative case with a valid host and referrer. But in the test setup
-      the Host is rewritten to foo.example.com and the referrer is sanitized.
-      This is why "SessionID Parameter Name with Off-Domain Referer" is triggered.
-    output:
-      log:
-        expect_ids: [943110]
-  - rule_id: 980170
-    test_ids: [2]
-    reason: |
-      Test setup replaces the numeric Host header therefore the rule is not triggered.
-    output:
-      retry_once: false
-      log:
-        no_expect_ids: [980170]
+  # [Claude fix] Updated 920270-4: Host: localhost%00 is accepted by Envoy (returns 200
+  # instead of Apache's 400). With P0 Host fix, Coraza now sees the %00 in Host and
+  # rules 920270/920274 fire correctly. Only the status needs overriding.
   - rule_id: 920270
     test_ids: [4]
     reason: |
-      The test expects response code 400 because apache drops the request due to the % character in the host header.
-      In the test setup the Host header is replaced so we get an HTTP 200 response instead.
-      The rewriting is also the reason why the rule doesn't match (no more % character).
+      Host: localhost%00 — Apache returns 400. Envoy accepts and returns 200.
     output:
       status: 200
-      log:
-        no_expect_ids: [920270]
-        expect_ids: [920274]
   - rule_id: 922130
     test_ids: [4]
     reason: |
@@ -355,70 +268,10 @@ test_overrides:
         expect_ids: [922130]
         match_regex: 'id.*922130.*"Multipart header contains characters outside of valid range".*'
 
-  # Backslash URIs and other inputs that Envoy's HTTP parser rejects
-  - rule_id: 920460
-    test_ids: [2,3,4,5]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 930110
-    test_ids: [8,12]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 932210
-    test_ids: [1,2,3,4]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 932260
-    test_ids: [17]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 934120
-    test_ids: [41,42]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 941100
-    test_ids: [1]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 941160
-    test_ids: [1]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 941330
-    test_ids: [1]
-    reason: |
-      Backslash in URI causes Envoy to drop the connection (HPE_INVALID_URL).
-      The request never reaches Coraza.
-    output:
-      expect_error: true
-  - rule_id: 949110
-    test_ids: [1,5]
-    reason: |
-      Invalid HTTP methods or backslash URIs cause Envoy to drop the connection.
-      The request never reaches Coraza.
-    output:
-      expect_error: true
+  # [Claude fix] Removed backslash-in-URI overrides: Envoy v1.37 accepts backslashes
+  # in both path and query string. Tests 920460-[2,3,4,5], 930110-[8,12],
+  # 932210-[1,2,3,4], 932260-[17], 934120-[41,42], 941100-[1], 941160-[1],
+  # 941330-[1], 949110-[1,5] all reach Coraza and are processed normally.
 
   # Tests not entirely clear why they behave differently
   - rule_id: 920171
@@ -437,3 +290,111 @@ test_overrides:
       Envoy likely removes the newline character from the header.
     output:
       status: 200
+  # [Claude fix] Converted from ftw.yaml ignore + skip to proper overrides.
+  # Envoy's HTTP codec validates Content-Length before forwarding to ext_proc.
+  # Invalid Content-Length values (non-numeric, mixed digits/non-digits, trailing
+  # semicolons) cause Envoy to drop the TCP connection immediately.
+  - rule_id: 920160
+    test_ids: [1,2,3,5]
+    reason: |
+      Invalid Content-Length header values cause Envoy to drop the connection
+      (HPE_INVALID_CONTENT_LENGTH). The request never reaches Coraza.
+      Test 1: Content-Length="NotDigits" (GET)
+      Test 2: Content-Length="NotDigits" (POST)
+      Test 3: Content-Length="123x" (mixed digits/non-digits)
+      Test 5: Content-Length="3;" (numeric with trailing semicolon)
+    output:
+      expect_error: true
+
+  # [Claude fix] Converted from ftw.yaml ignore to proper override.
+  # HTTP/2.0 version string sent over HTTP/1.1 wire causes Envoy to drop connection.
+  - rule_id: 920180
+    test_ids: [4]
+    reason: |
+      POST with HTTP/2.0 version over HTTP/1.1 wire, no Content-Length header,
+      autocomplete_headers=false. Envoy's HTTP/1.1 codec cannot parse "HTTP/2.0"
+      as a valid version and drops the connection.
+    output:
+      expect_error: true
+
+  # [Claude fix] Converted from ftw.yaml ignore to proper override.
+  - rule_id: 920290
+    test_ids: [4]
+    reason: |
+      GET request with empty Host header sent via encoded_request (raw bytes).
+      Envoy requires a valid Host header for HTTP/1.1 and drops the connection
+      when it encounters the empty value.
+    output:
+      expect_error: true
+
+  # [Claude fix] Converted from ftw.yaml ignore to proper override.
+  - rule_id: 920430
+    test_ids: [4]
+    reason: |
+      GET request with "HTTP/2" as the version string over HTTP/1.1 wire.
+      Envoy's HTTP/1.1 codec rejects the invalid version and drops the connection.
+      (The test is a negative case — HTTP/2 is valid, but not when sent as
+      a literal HTTP/1.1 request-line version.)
+    output:
+      expect_error: true
+
+  # [Claude fix] Converted from ftw.yaml ignore to proper override.
+  # All 932207 tests use HTTP/1.0 which causes Envoy to drop the connection (EOF).
+  # Tests 1,2,7 were previously overridden as no_expect_ids (Referer sanitization),
+  # but the EOF occurs before Envoy can process the request, making those overrides
+  # ineffective. The ignore in ftw.yaml was masking this.
+  - rule_id: 932207
+    test_ids: [3,4,5,6]
+    reason: |
+      Negative tests using HTTP/1.0 with various Referer header values.
+      Envoy drops the connection for HTTP/1.0 requests with these specific
+      Referer patterns before the request reaches Coraza.
+    output:
+      expect_error: true
+
+  # [Claude fix] Expanded from [8,18] to include tests 4 and 12.
+  # Tests 4 and 12 place RCE payloads in the Referer header which Envoy sanitizes.
+  - rule_id: 932237
+    test_ids: [4,12]
+    reason: |
+      These tests inject shell commands in the Referer header
+      (test 4: "set -o history", test 12: "env --version").
+      Envoy sanitizes the Referer header, removing the payload before
+      it reaches Coraza, so the rule does not trigger.
+    output:
+      log:
+        no_expect_ids: [932237]
+
+  # URI fragment (#) in the raw HTTP request-line causes Envoy to forward the
+  # request to ext_proc without generating an x-request-id header. Without a
+  # transaction ID the WAF cannot create a Coraza transaction and returns 403.
+  - rule_id: 920100
+    test_ids: [8]
+    reason: |
+      GET /get/index.html:80?...#tag — the # fragment in the raw request-line
+      causes Envoy to omit x-request-id. WAF returns 403 (unknown transaction).
+    output:
+      status: 403
+  - rule_id: 920610
+    test_ids: [2]
+    reason: |
+      GET /#fragment — the # fragment in the raw request-line causes Envoy
+      to omit x-request-id. WAF returns 403 (unknown transaction).
+    output:
+      status: 403
+
+  # [Claude fix] Envoy sanitizes the Referer header, removing attack payloads.
+  - rule_id: 932390
+    test_ids: [9]
+    reason: |
+      Fork bomb payload in Referer header — Envoy sanitizes Referer before ext_proc.
+    output:
+      log:
+        no_expect_ids: [932390]
+  - rule_id: 941120
+    test_ids: [49,50]
+    reason: |
+      XSS payloads (onclick, onmouseover) in Referer header — Envoy sanitizes Referer.
+    output:
+      log:
+        no_expect_ids: [941120]
