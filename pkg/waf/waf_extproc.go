@@ -22,7 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-type serverExtProc struct {
+type ServerExtProc struct {
 	waf coraza.WAF
 }
 
@@ -34,18 +34,26 @@ type requestTransaction struct {
 	//req *extproc.ProcessingRequest_RequestHeaders
 }
 
-var _ extproc.ExternalProcessorServer = &serverExtProc{}
+var _ extproc.ExternalProcessorServer = &ServerExtProc{}
+
+type WafExtProc struct {
+}
 
 // New creates a new ext_proc server.
-func NewExtProc(wafInstance coraza.WAF) extproc.ExternalProcessorServer {
-	return &serverExtProc{
+func NewExtProc(wafInstance coraza.WAF) *ServerExtProc {
+	return &ServerExtProc{
 		waf: wafInstance,
 	}
 }
 
+func (s *ServerExtProc) UpdateWAF(waf coraza.WAF) error {
+	s.waf = waf
+	return nil
+}
+
 // Check implements authorization's Check interface which performs authorization check based on the
 // attributes associated with the incoming request.
-func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) error {
+func (s *ServerExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) error {
 
 	// transactionID is received just on the first stream as part of request-headers. In
 	// case it is not send or does not exist on the transaction ttl/map we should deny
@@ -214,7 +222,7 @@ func (s *serverExtProc) Process(stream extproc.ExternalProcessor_ProcessServer) 
 	}
 }
 
-func (s *serverExtProc) newTransaction(req *extproc.ProcessingRequest_RequestHeaders) (*requestTransaction, error) {
+func (s *ServerExtProc) newTransaction(req *extproc.ProcessingRequest_RequestHeaders) (*requestTransaction, error) {
 	h := req.RequestHeaders.Headers
 	transactionID := getHeaderValue(h, "x-request-id")
 	if transactionID == "" {
