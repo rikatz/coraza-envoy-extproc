@@ -47,7 +47,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	wafInstance, err := coraza.NewWAF(coraza.NewWAFConfig().
 		WithErrorCallback(logError).

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -162,5 +163,83 @@ func TestBlock_ResponseBodyDLP(t *testing.T) {
 	// The WAF clears the body and closes the connection; Envoy returns 500.
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", resp.StatusCode)
+	}
+}
+
+// TestHotReload_NewRulePickedUp verifies that adding a new rule file to the
+// rules directory causes the WAF to reload and enforce the new rule without
+// restarting the service.
+func TestHotReload_NewRulePickedUp(t *testing.T) {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("failed to find repo root: %v", err)
+	}
+
+	ruleFile := filepath.Join(repoRoot, "config", "rules", "rules", "hotreload_test.conf")
+	t.Cleanup(func() {
+		_ = os.Remove(ruleFile)
+	})
+
+	// Step 1: confirm that the request is allowed before the new rule exists.
+	resp, err := http.Get(envoyAddr + "/service?hotreload=yes")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 before rule addition, got %d", resp.StatusCode)
+	}
+
+	// Step 2: write a new rule that blocks requests with ?hotreload=yes.
+	rule := `SecRule ARGS:hotreload "@streq yes" "id:999999, phase:1, deny, status:403, msg:'Hot reload test rule', log, auditlog"`
+	if err := os.WriteFile(ruleFile, []byte(rule), 0644); err != nil {
+		t.Fatalf("failed to write rule file: %v", err)
+	}
+
+	// Step 3: wait for the WAF to pick up the change and reload.
+	// The watcher debounce is 50ms, but filesystem events and WAF init take time.
+	var blocked bool
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(500 * time.Millisecond)
+		resp, err = http.Get(envoyAddr + "/service?hotreload=yes")
+		if err != nil {
+			t.Logf("request error while polling: %v", err)
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusForbidden {
+			blocked = true
+			break
+		}
+	}
+
+	if !blocked {
+		t.Errorf("expected request to be blocked (403) after hot reload, but it was not")
+	}
+
+	// Step 4: remove the rule and verify the request is allowed again.
+	if err := os.Remove(ruleFile); err != nil {
+		t.Fatalf("failed to remove rule file: %v", err)
+	}
+
+	var unblocked bool
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(500 * time.Millisecond)
+		resp, err = http.Get(envoyAddr + "/service?hotreload=yes")
+		if err != nil {
+			t.Logf("request error while polling: %v", err)
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			unblocked = true
+			break
+		}
+	}
+
+	if !unblocked {
+		t.Errorf("expected request to be allowed (200) after rule removal, but it was not")
 	}
 }
