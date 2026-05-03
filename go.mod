@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/corazawaf/coraza/v3 v3.7.0
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 )
